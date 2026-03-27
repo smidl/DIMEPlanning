@@ -25,7 +25,8 @@ end
 
 function list_files(odir=prepath)
     problem_dirs = filter(s -> !contains(s, "confs"), readdir(odir, join = true))
-    exp_dirs = mapreduce(pd -> readdir(pd, join = true), vcat, problem_dirs)
+    isempty(problem_dirs) && return DataFrame()
+    exp_dirs = mapreduce(pd -> readdir(pd, join = true), vcat, problem_dirs; init=String[])
 
     experiments = mapreduce(vcat, exp_dirs) do ed
         fs = readdir(ed)
@@ -92,15 +93,15 @@ for d in NeuroPlannerExperiments.IPC_PROBLEMS
 end
 
 k = length(readdir(confs_dir))
-start = 1
+batch_start = 1
 while true
-    if (length(readlines(`squeue -u smidlva1`)) < 80) && start < k
-        stop = min(k, start+99)
+    if (length(readlines(`squeue -u $(ENV["USER"])`)) < 80) && batch_start < k
+        batch_stop = min(k, batch_start+99)
         try
-            cmd = `sbatch --array=$(start)-$(stop) run_experiment.jl`
+            cmd = `sbatch --array=$(batch_start)-$(batch_stop) run_experiment.jl`
             run(cmd)
-            start += 100
-            println("issuing new jobs: ", start)
+            batch_start += 100
+            println("issuing new jobs: ", batch_start)
         catch
             println("queue likely full")
         end

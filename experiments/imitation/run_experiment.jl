@@ -4,8 +4,8 @@
 #SBATCH --cores-per-socket=8
 #SBATCH --mem=32G
 #SBATCH -p cpulong
-#SBATCH --error=/home/smidlva1/logs/pddl.%j.err
-#SBATCH --out=/home/smidlva1/logs/pddl.%j.out
+#SBATCH --error=/home/%u/logs/pddl.%j.err
+#SBATCH --out=/home/%u/logs/pddl.%j.out
 #=
 export DATADEPS_ALWAYS_ACCEPT=true
 export PATH="${HOME}/.julia/juliaup/bin:${PATH}"
