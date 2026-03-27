@@ -95,6 +95,7 @@ end
 k = length(readdir(confs_dir))
 batch_start = 1
 while true
+    global batch_start
     if (length(readlines(`squeue -u $(ENV["USER"])`)) < 80) && batch_start < k
         batch_stop = min(k, batch_start+99)
         try
