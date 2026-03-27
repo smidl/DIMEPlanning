@@ -57,7 +57,7 @@ pooled_blocks = [FFNN(hidden_dim = h, output_dim = 1, layers = l, layernorm = ln
 
 models = [Model(message_pass_model = mp, pooled_model = o) for (mp,o) in Iterators.product(message_blocks, pooled_blocks)]
 losses = [Loss(s) for s in ["lstar"]]
-trains = [SupervisedTraining(;max_steps = 50_000)]
+trains = [SupervisedTraining(;max_epoch = 10)]
 planners = [AStar(max_time = 30)]
 seeds = [1,2,3]
 
