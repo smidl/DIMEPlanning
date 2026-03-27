@@ -66,8 +66,9 @@ confs_dir = joinpath(prepath, "confs")
 mkpath(confs_dir)
 
 confs = Iterators.product(datasets, models, extractors, losses, trains, planners, seeds)
-for (i,c) in enumerate(confs)
-    write_config(joinpath(confs_dir, "$(i).json"), c...)
+for (i, (dataset, model, extractor, loss, train, planner, seed)) in enumerate(confs)
+    conf = create_config(dataset, model, extractor, loss, train, planner, seed)
+    write_config(joinpath(confs_dir, "$(i).json"), conf)
 end
 
 # Check progress
