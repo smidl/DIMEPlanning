@@ -1,0 +1,9 @@
+[submodule "overleaf"]
+	path = overleaf
+	url = https://git:olp_1CQmPQzEArqtfdJGqwWkOzVAPgWK8n460E3V@git.overleaf.com/698077875b445ee1612c916b
+[submodule "NeuroPlannerExperiments.jl"]
+	path = NeuroPlannerExperiments.jl
+	url = git@github.com:pevnak/NeuroPlannerExperiments.jl.git
+[submodule "PrivateNeuroPlanner.jl"]
+	path = PrivateNeuroPlanner.jl
+	url = git@github.com:pevnak/PrivateNeuroPlanner.jl.git
