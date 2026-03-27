@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --cores-per-socket=8
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH -p cpulong
 #SBATCH --error=/home/%u/logs/pddl.%j.err
