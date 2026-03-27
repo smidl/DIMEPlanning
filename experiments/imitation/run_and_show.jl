@@ -102,8 +102,8 @@ while true
             run(cmd)
             batch_start += 100
             println("issuing new jobs: ", batch_start)
-        catch
-            println("queue likely full")
+        catch e
+            println("sbatch failed: ", e)
         end
     end
     display(list_files())
