@@ -5,7 +5,7 @@ using Serialization
 
 include(joinpath(@__DIR__, "files.jl"))
 
-prepath = joinpath(dirname(dirname(@__DIR__)), "results")
+prepath = joinpath(ENV["HOME"], "DIMEPlanning", "results")
 
 function best_models(odir=prepath)
     problem_dirs = filter(s -> !contains(s, "confs"), readdir(odir, join = true))

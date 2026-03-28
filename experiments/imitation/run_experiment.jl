@@ -20,7 +20,7 @@ exit
 
 # parse args
 id = parse(Int, ENV["SLURM_ARRAY_TASK_ID"])
-prepath = joinpath(dirname(dirname(@__DIR__)), "results")
+prepath = joinpath(ENV["HOME"], "DIMEPlanning", "results")
 path = readdir(joinpath(prepath, "confs"); join=true, sort=true)[id]
 
 s = rand(1:60)
@@ -40,7 +40,7 @@ using PDDL
 using Serialization
 using Random
 using Statistics
-include(joinpath(@__DIR__, "files.jl"))
+include(joinpath(ENV["HOME"], "DIMEPlanning", "experiments", "imitation", "files.jl"))
 
 @info "parsing conf"
 conf = load_config(path)
