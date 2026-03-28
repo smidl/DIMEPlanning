@@ -37,11 +37,12 @@ function list_files(odir=prepath)
     xs = map(NeuroPlannerExperiments.IPC_PROBLEMS) do d
         sub_files  = filter(f -> contains(f, d[7:end]), experiments)
         isempty(sub_files) && return(missing)
-        sl = map(sub_files) do ef
+        sl = filter(!isnothing, map(sub_files) do ef
             df, conf = deserialize(ef)
             sub_df = filter(s -> contains(s.problem_file,"testing"),df)
-            mean(sub_df.solved)
-        end
+            isempty(sub_df) || !hasproperty(sub_df, :solved) ? nothing : mean(sub_df.solved)
+        end)
+        isempty(sl) && return(missing)
         mx, mn, sd = maximum(sl), mean(sl), std(sl)
         println(d,"  ",(mx, mn, sd)," (",length(sub_files),")")
         (;dataset = d, best = mx, mean = mn, std = sd, finished = length(sub_files))
