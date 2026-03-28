@@ -46,7 +46,9 @@ function list_files(odir=prepath)
         mx, mn, sd = maximum(sl), mean(sl), std(sl)
         println(d,"  ",(mx, mn, sd)," (",length(sub_files),")")
         (;dataset = d, best = mx, mean = mn, std = sd, finished = length(sub_files))
-    end |> skipmissing |> DataFrame
+    end
+    rows = collect(skipmissing(xs))
+    isempty(rows) ? DataFrame() : DataFrame(rows)
 end
 
 
