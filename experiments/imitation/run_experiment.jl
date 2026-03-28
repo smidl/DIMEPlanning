@@ -34,6 +34,7 @@ Configuration:
 sleep(s)
 
 using NeuroPlannerExperiments
+using NeuroPlannerExperiments.Optimisers
 using NeuroPlanner
 using DataFrames
 using PDDL
@@ -61,7 +62,9 @@ model = if isfile(modelfile)
 else
     model = construct_model(pddld, dataset, conf.model)
     samples = construct_minibatches(pddld, materialize(conf.loss), dataset)
-    model = train(model, samples, conf.train)
+    optimiser = NeuroPlannerExperiments.materialize(conf.training.optimiser)
+    state_tree = Optimisers.setup(optimiser, model)
+    model, _ = train(model, samples, (optimiser, state_tree), conf.training)
     serialize(modelfile, (;model, conf))
     model
 end
@@ -71,5 +74,5 @@ rfile = result_file(conf, prepath)
 stats = evaluate_heuristic(pddld, model, conf.planner, dataset, rfile)
 stats = stats isa NamedTuple ? stats.stats : stats
 serialize(rfile, (;stats, conf))
-write_config(conf_file(conf, prepath), conf.dataset, conf.model, conf.extractor, conf.loss, conf.train, conf.planner, seed)
+write_config(conf_file(conf, prepath), conf)
 @info "Writing file to $(rfile)"
