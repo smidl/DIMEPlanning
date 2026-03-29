@@ -38,8 +38,10 @@ function list_files(odir=prepath)
         sub_files  = filter(f -> contains(f, d[7:end]), experiments)
         isempty(sub_files) && return(missing)
         sl = filter(!isnothing, map(sub_files) do ef
-            df, conf = deserialize(ef)
-            sub_df = filter(s -> contains(s.problem_file,"testing"),df)
+            r = deserialize(ef)
+            df = r isa NamedTuple ? r.stats : r[1]
+            isempty(df) || !hasproperty(df, :problem_file) || !hasproperty(df, :solved) && return nothing
+            sub_df = filter(s -> contains(s.problem_file,"testing"), df)
             isempty(sub_df) || !hasproperty(sub_df, :solved) ? nothing : mean(sub_df.solved)
         end)
         isempty(sl) && return(missing)
