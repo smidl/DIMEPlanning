@@ -97,17 +97,20 @@ for d in NeuroPlannerExperiments.IPC_PROBLEMS
     println()
 end
 
-k = length(readdir(confs_dir))
-batch_start = 1
 while true
-    global batch_start
-    if (length(readlines(`squeue -u $(ENV["USER"])`)) < 80) && batch_start < k
-        batch_stop = min(k, batch_start+99)
+    files = map(readdir(confs_dir; join=true, sort=true)) do path
+        c = load_config(path)
+        ofile = result_file(c, prepath)
+        (;path, stats = ofile, tmp = ofile*".tmp", model = model_file(c, prepath))
+    end
+    pending = findall(c -> !isfile(c.stats), files)
+    if (length(readlines(`squeue -u $(ENV["USER"])`)) < 80) && !isempty(pending)
+        batch = pending[1:min(100, end)]
+        indices = join(batch, ",")
         try
-            cmd = `sbatch --array=$(batch_start)-$(batch_stop) run_experiment.jl`
+            cmd = `sbatch --array=$(indices) run_experiment.jl`
             run(cmd)
-            batch_start += 100
-            println("issuing new jobs: ", batch_start)
+            println("issuing new jobs: indices $(first(batch))–$(last(batch))");
         catch e
             println("sbatch failed: ", e)
         end
