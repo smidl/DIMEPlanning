@@ -25,8 +25,10 @@ end
 
 function list_files(odir=prepath)
     problem_dirs = filter(s -> !contains(s, "confs"), readdir(odir, join = true))
+    println("DEBUG problem_dirs: ", problem_dirs)
     isempty(problem_dirs) && return DataFrame()
     exp_dirs = mapreduce(pd -> readdir(pd, join = true), vcat, problem_dirs; init=String[])
+    println("DEBUG exp_dirs count: ", length(exp_dirs))
 
     experiments = mapreduce(vcat, exp_dirs) do ed
         fs = readdir(ed)
@@ -34,14 +36,20 @@ function list_files(odir=prepath)
         isempty(fs) && String[]
         return(map(s -> joinpath(ed,s), fs))
     end
+    println("DEBUG experiments found: ", length(experiments))
+    for e in experiments; println("  ", e); end
+
     xs = map(NeuroPlannerExperiments.IPC_PROBLEMS) do d
         sub_files  = filter(f -> contains(f, d[7:end]), experiments)
         isempty(sub_files) && return(missing)
+        println("DEBUG $(d): $(length(sub_files)) result files")
         sl = filter(!isnothing, map(sub_files) do ef
             r = deserialize(ef)
             df = r isa NamedTuple ? r.stats : r[1]
+            println("DEBUG   $(basename(ef)): type=$(typeof(r)), df size=$(size(df)), cols=$(names(df))")
             isempty(df) || !hasproperty(df, :problem_file) || !hasproperty(df, :solved) && return nothing
             sub_df = filter(s -> contains(s.problem_file,"testing"), df)
+            println("DEBUG   testing rows: $(nrow(sub_df))")
             isempty(sub_df) || !hasproperty(sub_df, :solved) ? nothing : mean(sub_df.solved)
         end)
         isempty(sl) && return(missing)
