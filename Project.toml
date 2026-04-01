@@ -1,0 +1,10 @@
+name = "DIMEPlanning"
+uuid = "00000000-0000-0000-0000-000000000001"
+version = "0.1.0"
+
+[deps]
+NeuroPlanner = "628e68bf-2596-4972-a53b-69fd3c43dbca"
+NeuroPlannerExperiments = "0119193a-0b5e-4bee-8734-a894413f858b"
+OneHotArrays = "0b1bfda6-eb8a-41d2-88d8-f5af5cad476f"
+StatsBase = "2913bbd2-ae8a-5f71-8cce-781a0cdc898f"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
