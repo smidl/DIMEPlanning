@@ -2,6 +2,7 @@ module DIMEPlanning
 
 using NeuroPlanner
 using NeuroPlanner.PDDL
+using Julog
 using NeuroPlanner.SymbolicPlanners
 using NeuroPlanner.Mill
 using NeuroPlanner.Mill.Flux
