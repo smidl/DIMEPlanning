@@ -59,7 +59,7 @@ Arguments:
 
 Returns `(f_scores, v_scores)` each of shape (1, n_queries).
 """
-function (m::DIMEModel)(x, context_bags::Mill.AlignedBags, query_ids::Vector{Int})
+function (m::DIMEModel)(x, context_bags, query_ids::Vector{Int})
     # 1. Embed all states with shared backbone
     embeddings = m.backbone(x)   # (d × N)
 
@@ -84,7 +84,7 @@ end
 
 Return only the predictor scores f(s|T). Used during planning as heuristic.
 """
-function f_score(m::DIMEModel, x, context_bags::Mill.AlignedBags, query_ids::Vector{Int})
+function f_score(m::DIMEModel, x, context_bags, query_ids::Vector{Int})
     first(m(x, context_bags, query_ids))
 end
 

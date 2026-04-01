@@ -44,7 +44,7 @@ end
 Evaluate the DIME acquisition function a(s) = log f(s|T) + λ·v(s|T).
 After evaluation, the state is added to the context T.
 """
-function SymbolicPlanners.compute(h::DIMEHeuristic, _domain, state::GenericState, _spec)
+function SymbolicPlanners.compute(h::DIMEHeuristic, _domain::Domain, state::GenericState, _spec::Specification)
     t = @elapsed begin
         x_s = h.pddle(state)
         x_query = Mill.batch([x_s])
@@ -55,11 +55,15 @@ function SymbolicPlanners.compute(h::DIMEHeuristic, _domain, state::GenericState
             x_all = x_query
             query_ids = [1]
         else
-            # Stack context + query into one batch
-            context_nodes = Mill.batch(h.context)
-            n_ctx = nobs(context_nodes)
-            x_all = Mill.catobs(context_nodes, x_query)
-            # Context = all states except the last (query)
+            # Stack context + query into one batch.
+            # h.context stores single-state batched nodes (same type as x_query).
+            # catobs them all together then append the query at the end.
+            n_ctx = length(h.context)
+            # reduce(catobs, Vector{<:KnowledgeBase}) is defined in NeuroPlanner.
+            # h.context is Vector{Any}; convert to a concretely-typed vector first.
+            ctx_vec = convert(Vector{typeof(x_query)}, h.context)
+            x_all = reduce(Mill.catobs, [ctx_vec; [x_query]])
+            # Context = first n_ctx observations, query = last one
             context_bags = Mill.AlignedBags([1:n_ctx])
             query_ids = [n_ctx + 1]
         end
@@ -72,8 +76,8 @@ function SymbolicPlanners.compute(h::DIMEHeuristic, _domain, state::GenericState
         # log f is negative for low P(on optimal plan) → high priority when negative
         a = -log(σ(f_val)) - h.λ * max(v_val, 0f0)
 
-        # Add current state to context for future evaluations
-        push!(h.context, x_s)
+        # Add current state to context for future evaluations (store as single-obs batch)
+        push!(h.context, x_query)
     end
     h.t[] += t
     return Float32(a)

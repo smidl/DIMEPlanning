@@ -149,12 +149,11 @@ function DIMEMiniBatch(pddld, domain::GenericDomain, problem::GenericProblem,
     n_queries = length(query_ids)
     if n_queries == 0
         # empty — no open-set states
-        context_bags = Mill.AlignedBags(Int[])
+        context_bags = Mill.ScatteredBags(Vector{Int}[])
         Δ_targets = Float32[]
     else
-        lengths = [length(c) for c in context_ids_per_query]
-        starts = cumsum([1; lengths[1:end-1]])
-        context_bags = Mill.AlignedBags([s:(s+l-1) for (s,l) in zip(starts, lengths)])
+        # ScatteredBags stores actual state indices into x (not sequential re-indexed)
+        context_bags = Mill.ScatteredBags(context_ids_per_query)
         Δ_targets = zeros(Float32, n_queries)   # placeholder; filled by compute_delta_targets!
     end
 

@@ -98,20 +98,28 @@ function dime_loss(model::DIMEModel, mb::DIMEMiniBatch; α=0.1f0)
     f_scores, v_scores = model(mb.x, mb.context_bags, mb.query_ids)
 
     # Predictor loss (lgbfs ranking on f_scores)
-    # H₊/H₋ are indexed over all states, but f_scores covers only queries.
-    # We need to project f_scores back to full state space for the ranking loss.
-    # Build a full f vector: 0 for non-query states, f_scores for query states.
+    # Project f_scores (1 × n_q) to full state space (1 × N) without mutation:
+    # build a constant scatter matrix Q (n_q × N) with Q[k, query_ids[k]] = 1,
+    # then f_full = f_scores * Q  — only the matmul is differentiated.
     N = size(mb.H₊, 1)
-    f_full = zeros(Float32, 1, N)
-    for (k, qid) in enumerate(mb.query_ids)
-        f_full[1, qid] = f_scores[1, k]
+    n_q = length(mb.query_ids)
+    # Q is a constant scatter matrix — mark @ignore_derivatives so Zygote
+    # treats it as a fixed matrix and only differentiates through the matmul.
+    Q = ChainRulesCore.@ignore_derivatives begin
+        Q_buf = zeros(Float32, n_q, N)
+        for (k, qid) in enumerate(mb.query_ids)
+            Q_buf[k, qid] = 1.0f0
+        end
+        Q_buf
     end
+    f_full = f_scores * Q
     L_pred = dime_pred_loss(f_full, mb.path_cost, mb.H₊, mb.H₋)
 
     α == 0 && return L_pred
 
-    # Value loss — use per-sample Δ approximation
-    compute_delta_targets!(mb, model)
+    # Value loss — Δ targets are treated as constants (stop-gradient):
+    # they are regression targets computed from a detached forward pass.
+    ChainRulesCore.@ignore_derivatives compute_delta_targets!(mb, model)
     L_value = dime_value_loss(v_scores, mb.Δ_targets)
 
     L_pred + α * L_value
