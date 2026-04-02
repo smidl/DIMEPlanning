@@ -3,15 +3,19 @@ uuid = "00000000-0000-0000-0000-000000000001"
 version = "0.1.0"
 
 [deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Julog = "5d8bcb5e-2b2c-4a96-a2b1-d40b3d3c344f"
 NeuroPlanner = "628e68bf-2596-4972-a53b-69fd3c43dbca"
 NeuroPlannerExperiments = "0119193a-0b5e-4bee-8734-a894413f858b"
 OneHotArrays = "0b1bfda6-eb8a-41d2-88d8-f5af5cad476f"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+DataFrames = "1.8.1"
+Serialization = "1.11.0"
 Test = "1.11.0"
 Zygote = "0.7.10"
