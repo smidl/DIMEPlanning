@@ -21,7 +21,7 @@ include("dime_model.jl")
 include("dime_loss.jl")
 include("dime_planner.jl")
 
-export DIMEMiniBatch
+export DIMEMiniBatch, strip_context, DIMEMiniBatch_onpolicy
 export DIMEModel, construct_dime_model, embed, f_score
 export dime_loss, dime_pred_loss, dime_value_loss, compute_delta_targets!
 export DIMEHeuristic, reset_context!, DIMEPlanner

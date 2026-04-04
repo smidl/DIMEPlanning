@@ -16,17 +16,14 @@
 ####################################################################
 
 """
-    dime_pred_loss(f_scores, path_cost, H₊, H₋, surrogate=softplus)
+    dime_pred_loss(f_scores, H₊, H₋, surrogate=softplus)
 
-Ranking loss on predictor scores f(s|T). Identical in form to lₛloss
-but applied to the context-aware f_scores instead of model(x).
-
-Open-set states (H₊) should have higher f+g than trajectory states (H₋).
+Ranking loss on predictor scores f(s|T). Identical in form to lgbfsloss:
+trajectory states (H₋) should have lower f than open-set states (H₊).
+Note: path cost g is NOT added here, matching lgbfsloss exactly.
 """
-function dime_pred_loss(f_scores, path_cost, H₊, H₋, surrogate=softplus)
-    g = reshape(path_cost, 1, :)
-    f = f_scores + g
-    o = f * H₋ - f * H₊
+function dime_pred_loss(f_scores, H₊, H₋, surrogate=softplus)
+    o = f_scores * H₋ - f_scores * H₊
     isempty(o) && return zero(eltype(o))
     mean(surrogate.(o))
 end
@@ -51,33 +48,37 @@ Fill in Δ_targets in-place using the current predictor.
 For each query state s_k with context T_k:
     Δ(s_k) = L_pred(T_k) - L_pred(T_k ∪ {s_k expanded})
 
-Approximation used here: we compute L_pred on the full minibatch once,
-then approximate Δ(s_k) as the per-sample contribution of s_k to the loss.
-This avoids re-running the model n_queries times.
-
-Specifically:
-    Δ(s_k) ≈ surrogate(f(s_k) + g(s_k) - f(s⁻_k) - g(s⁻_k))
-where s⁻_k is the paired trajectory state (from H₋).
+Approximation: run the model on all unique states (queries + their paired
+trajectory states) with empty context, then:
+    Δ(s_k) ≈ surrogate(f(s_k) - f(s⁻_k))
+where s⁻_k is the paired trajectory state from H₋.
+This matches the dime_pred_loss convention (no g offset).
 """
 function compute_delta_targets!(mb::DIMEMiniBatch, model::DIMEModel, surrogate=softplus)
     isempty(mb.query_ids) && return mb
-    f_scores, _ = model(mb.x, mb.context_bags, mb.query_ids)
-    g = mb.path_cost
 
-    # For each query k: paired trajectory state index comes from H₋
-    # H₋ is a one-hot matrix: H₋[:, k] has a 1 at the paired trajectory state
-    H₋_dense = Array(mb.H₋)  # (N × n_pairs) — same size as H₊
+    # Collect all unique state indices needed: queries + their H₋ pairs
+    H₋_dense = Array(mb.H₋)
     n_queries = length(mb.query_ids)
+    traj_ids = Int[]
+    for k in 1:n_queries
+        tid = findfirst(>(0), H₋_dense[:, k])
+        push!(traj_ids, tid === nothing ? 0 : tid)
+    end
+
+    # Run model on all queries (with their actual context bags)
+    f_q, _ = model(mb.x, mb.context_bags, mb.query_ids)
+
+    # Run model on trajectory states with empty context for their scores
+    unique_tids = unique(filter(>(0), traj_ids))
+    empty_bags  = Mill.ScatteredBags([Int[] for _ in unique_tids])
+    f_t_all, _ = model(mb.x, empty_bags, unique_tids)
+    tid_to_score = Dict(tid => f_t_all[1, i] for (i, tid) in enumerate(unique_tids))
 
     for k in 1:n_queries
-        qid = mb.query_ids[k]
-        # Find paired trajectory state (column k of H₋ has one non-zero entry)
-        col = H₋_dense[:, k]   # this is the k-th column pairing
-        tid = findfirst(>(0), col)
-        tid === nothing && continue
-        f_q = f_scores[1, k] + g[qid]
-        f_t = f_scores[1, k] + g[tid]   # reuse f_scores for trajectory state
-        mb.Δ_targets[k] = surrogate(f_q - f_t)
+        tid = traj_ids[k]
+        tid == 0 && continue
+        mb.Δ_targets[k] = surrogate(f_q[1, k] - tid_to_score[tid])
     end
     mb
 end
@@ -94,26 +95,15 @@ At α=0, recovers the lgbfs baseline exactly.
 function dime_loss(model::DIMEModel, mb::DIMEMiniBatch; α=0.1f0)
     isempty(mb.query_ids) && return zero(Float32)
 
-    # Forward pass
-    f_scores, v_scores = model(mb.x, mb.context_bags, mb.query_ids)
+    # Option B: f_head is context-free (d → 1), scores ALL states in one backbone pass.
+    # This is identical to lgbfsloss: score everything, rank with H₊/H₋.
+    # v_head is context-aware (3d → 1), only scored for query states.
+    all_ids = ChainRulesCore.@ignore_derivatives collect(1:size(mb.H₊, 1))
+    empty_bags_all = ChainRulesCore.@ignore_derivatives Mill.ScatteredBags([Int[] for _ in all_ids])
+    f_full, _  = model(mb.x, empty_bags_all, all_ids)   # (1 × N) — all states, no context
+    _, v_scores = model(mb.x, mb.context_bags, mb.query_ids)  # (1 × n_q) — queries with context
 
-    # Predictor loss (lgbfs ranking on f_scores)
-    # Project f_scores (1 × n_q) to full state space (1 × N) without mutation:
-    # build a constant scatter matrix Q (n_q × N) with Q[k, query_ids[k]] = 1,
-    # then f_full = f_scores * Q  — only the matmul is differentiated.
-    N = size(mb.H₊, 1)
-    n_q = length(mb.query_ids)
-    # Q is a constant scatter matrix — mark @ignore_derivatives so Zygote
-    # treats it as a fixed matrix and only differentiates through the matmul.
-    Q = ChainRulesCore.@ignore_derivatives begin
-        Q_buf = zeros(Float32, n_q, N)
-        for (k, qid) in enumerate(mb.query_ids)
-            Q_buf[k, qid] = 1.0f0
-        end
-        Q_buf
-    end
-    f_full = f_scores * Q
-    L_pred = dime_pred_loss(f_full, mb.path_cost, mb.H₊, mb.H₋)
+    L_pred = dime_pred_loss(f_full, mb.H₊, mb.H₋)
 
     α == 0 && return L_pred
 

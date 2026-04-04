@@ -22,8 +22,8 @@ Wraps a shared GNN backbone with two output heads.
 Fields:
 - `backbone`  : KnowledgeModel — maps a state (Mill node) to embedding ∈ R^d
 - `aggregator`: Mill aggregation over context bag → R^d (e.g. SegmentedSumMax → R^2d)
-- `f_head`    : MLP R^(d + 2d) → R^1, predicts log-odds P(s on optimal plan)
-- `v_head`    : MLP R^(d + 2d) → R^1, predicts CMI proxy Δ(s)
+- `f_head`    : MLP R^d → R^1, predicts log-odds P(s on optimal plan) — context-free, identical to lgbfs
+- `v_head`    : MLP R^(d + 2d) → R^1, predicts CMI proxy Δ(s) — context-aware
 """
 struct DIMEModel{B,A,F,V}
     backbone::B
@@ -63,19 +63,20 @@ function (m::DIMEModel)(x, context_bags, query_ids::Vector{Int})
     # 1. Embed all states with shared backbone
     embeddings = m.backbone(x)   # (d × N)
 
-    # 2. Pool context for each query: SegmentedSumMax over context embeddings
+    # 2. Extract query embeddings
+    q = embeddings[:, query_ids]      # (d × n_queries)
+
+    # 3. f_head: context-free (d → 1), identical to lgbfs scalar head
+    f_scores = m.f_head(q)            # (1 × n_queries)
+
+    # 4. Pool context for v_head: SegmentedSumMax over context embeddings
     context_node = Mill.BagNode(Mill.ArrayNode(embeddings), context_bags)
     ctx = m.aggregator(context_node)  # (2d × n_queries) for SumMax
 
-    # 3. Extract query embeddings
-    q = embeddings[:, query_ids]      # (d × n_queries)
-
-    # 4. Concatenate query + context
-    joint = vcat(q, ctx)              # (3d × n_queries)
-
-    # 5. Apply heads
-    f_scores = m.f_head(joint)        # (1 × n_queries)
+    # 5. v_head: context-aware (3d → 1)
+    joint    = vcat(q, ctx)           # (3d × n_queries)
     v_scores = m.v_head(joint)        # (1 × n_queries)
+
     (f_scores, v_scores)
 end
 
@@ -111,19 +112,21 @@ function construct_dime_model(pddld, problem::GenericProblem, conf::Model)
     # Build backbone: same GNN as standard model, but output is the hidden embedding
     # (output_dim = hidden_dim, NOT 1). We do this by setting the pooled model to
     # output hidden_dim dimensions.
-    hidden_dim = conf.message_pass_model.hidden_dim
     embedding_dim = conf.message_pass_model.output_dim
 
     state = PDDL.initstate(pddld.domain, problem)
     pddle = NeuroPlanner.add_goalstate(pddld, problem)
     h₀ = pddle(state)
 
-    # Backbone outputs embedding_dim-dimensional vectors, not scalars
+    # Backbone outputs embedding_dim-dimensional vectors, not scalars.
+    # backbone_output = Dense(embedding_dim → embedding_dim, relu)  — just one layer,
+    # no layernorm, so that backbone + f_head matches the lgbfs pooled_model exactly:
+    #   backbone(·) + f_head = Dense(d→e,relu) + Dense(e→1) ≡ pooled_model(layers=2,odim=1)
     backbone_output = NeuroPlannerExperiments.FFNN(
-        hidden_dim = hidden_dim,
         output_dim = embedding_dim,
-        layers = conf.pooled_model.layers,
-        layernorm = conf.pooled_model.layernorm
+        layers = 1,
+        layernorm = false,
+        sigma = conf.message_pass_model.sigma
     )
     backbone = NeuroPlanner.reflectinmodel(
         h₀, message_pass_model, aggregation;
@@ -138,18 +141,19 @@ function construct_dime_model(pddld, problem::GenericProblem, conf::Model)
         identity
     )
 
-    # Joint dimension: query embedding + context (sum+max)
-    joint_dim = embedding_dim + 2 * embedding_dim  # = 3 * embedding_dim
-
-    # Two heads
+    # Option B architecture:
+    #   f_head: embedding_dim → 1  (context-free, single linear readout)
+    #   v_head: 3*embedding_dim → 1 (context-aware: query + sum + max)
+    #
+    # f_head is a single Dense layer (no hidden layers) so that
+    # backbone + f_head has the same total depth as the lgbfs model
+    # (which uses backbone + pooled_model as one unit).
+    # All MLP capacity is in the backbone; f_head is just a linear readout.
+    # This guarantees λ=0 ≡ lgbfs in training depth and signal.
     head_conf = conf.pooled_model
-    f_head = NeuroPlannerExperiments.FFNN(
-        hidden_dim = head_conf.hidden_dim,
-        output_dim = 1,
-        layers = head_conf.layers,
-        layernorm = head_conf.layernorm
-    )(joint_dim)
+    f_head = Flux.Dense(embedding_dim => 1)
 
+    joint_dim = embedding_dim + 2 * embedding_dim   # = 3 * embedding_dim
     v_head = NeuroPlannerExperiments.FFNN(
         hidden_dim = head_conf.hidden_dim,
         output_dim = 1,

@@ -1,8 +1,22 @@
 using NeuroPlannerExperiments
-include(joinpath(@__DIR__, "files.jl"))
-include(joinpath(@__DIR__, "config.jl"))
 
-isdir(confs_dir) || error("No confs dir found — run generate_confs.jl first")
+# Usage:
+#   julia submit.jl              # standard lgbfs/lstar sweep
+#   julia submit.jl dime         # DIME sweep (uses dime_config.jl + dime_files.jl)
+mode = get(ARGS, 1, "standard")
+
+if mode == "dime"
+    using DIMEPlanning
+    include(joinpath(@__DIR__, "dime_files.jl"))
+    include(joinpath(@__DIR__, "dime_config.jl"))
+    experiment_script = joinpath(@__DIR__, "run_dime_experiment.jl")
+else
+    include(joinpath(@__DIR__, "files.jl"))
+    include(joinpath(@__DIR__, "config.jl"))
+    experiment_script = joinpath(@__DIR__, "run_experiment.jl")
+end
+
+isdir(confs_dir) || error("No confs dir found — run $(mode == "dime" ? "dime_" : "")generate_confs.jl first")
 
 println("Starting submission loop. Ctrl+C to stop.")
 while true
@@ -25,7 +39,7 @@ while true
         batch = pending[1:min(100, end)]
         indices = join(batch, ",")
         try
-            run(`sbatch --array=$(indices) run_experiment.jl`)
+            run(`sbatch --array=$(indices) $(experiment_script)`)
             println("Submitted indices $(first(batch))–$(last(batch))")
         catch e
             println("sbatch failed: $e")

@@ -251,3 +251,55 @@ MCTS-DIME lacked. Training on 1000 problems with 5 seeds accumulates thousands o
 (s, y_s, Δ(s)) tuples that jointly train the GNN to recognise "what makes a state
 likely on the optimal path" across the entire domain — not just within one episode.
 This is why the planning setting is the right setting for DIME.
+
+---
+
+## DIME-Planning implementation bugs found during ferry testrun (2026-04)
+
+### Bug 1: `dime_pred_loss` incorrectly added path cost `g`
+
+**Symptom**: DIME (any λ) solved only 5/30 easy ferry problems regardless of epochs or
+context strategy. lgbfs solved 30/30 with identical architecture and training budget.
+
+**Root cause**: `dime_pred_loss` computed `(f+g)*H₋ - (f+g)*H₊` instead of
+`f*H₋ - f*H₊`. Since `g*H₋ - g*H₊ = g[traj] - g[open]` is a constant the model
+cannot control, the gradient pushed `f` to compensate for the path cost difference
+rather than learning the optimal-path ranking. `lgbfsloss` does NOT add `g`.
+
+**Fix**: Remove `g` from `dime_pred_loss`. The acquisition function at inference
+naturally incorporates `g` through the A* priority `g(s) + a(s)` — the training
+loss should only train the heuristic component `f`, not `f+g`.
+
+### Bug 3: Acquisition function sign inverted in `DIMEHeuristic.compute`
+
+**Symptom**: DIME solved 5/30 even after all other fixes were applied. The 5 solved
+problems were the smallest ones (p01-p05), suggesting the heuristic was working
+backwards: preferring large problems with many open-list states over easy short paths.
+
+**Root cause**: `a = -log(σ(f_val)) - λ * max(v_val, 0)` is a decreasing function of
+`f`. Since `dime_pred_loss` trains trajectory states to have LOW f and open-set states
+to have HIGH f, and GBFS expands states with SMALLEST `a` first, the formula caused
+open-set states (high f → small a) to be expanded first — the exact opposite of the
+intended behaviour.
+
+**Fix**: `a = f_val - λ * max(v_val, 0)`. With low f → small a → expanded first,
+DIME correctly prefers trajectory-like states. The exploration term subtracts
+`λ*max(v,0)` so high-CMI states also get priority.
+
+**Note**: The `g_mult=1.0` A* priority is `g(s) + a(s) = g(s) + f(s)`. Since
+lgbfsloss trains f to be small for trajectory states (which have small g), the overall
+priority still correctly ranks likely path states first.
+
+### Bug 2: `compute_delta_targets!` reused query f-score for trajectory state
+
+**Symptom**: Value network v trained for 50 epochs without improvement in planning
+quality; Δ targets did not reflect actual predictor improvement from expansion.
+
+**Root cause**: `f_t = f_scores[1, k] + g[tid]` used the k-th query's f-score as a
+proxy for the paired trajectory state's score. `f_scores` only contains query scores
+(indexed by query position k), not all state scores. So the Δ target
+`surrogate(f_q - f_t)` was comparing a query's score to itself plus a path cost
+offset — pure noise.
+
+**Fix**: Run a separate forward pass on trajectory state indices to get their actual
+f-scores, then compute `Δ(s_k) = surrogate(f(s_k) - f(traj_k))`.

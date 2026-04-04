@@ -159,3 +159,131 @@ function DIMEMiniBatch(pddld, domain::GenericDomain, problem::GenericProblem,
 
     DIMEMiniBatch(x, H₊, H₋, path_cost, context_bags, query_ids, Δ_targets)
 end
+
+"""
+    strip_context(mb::DIMEMiniBatch) -> DIMEMiniBatch
+
+Return a copy of `mb` with empty context bags (all queries see an empty T).
+Use this for Option 1 training: train the f-head as a context-free predictor
+(identical signal to lgbfs), while keeping the model architecture unchanged so
+context can still be used at inference time.
+"""
+function strip_context(mb::DIMEMiniBatch)
+    empty_bags = Mill.ScatteredBags([Int[] for _ in mb.query_ids])
+    DIMEMiniBatch(mb.x, mb.H₊, mb.H₋, mb.path_cost, empty_bags, mb.query_ids, mb.Δ_targets)
+end
+
+"""
+    DIMEMiniBatch_onpolicy(pddld, domain, problem, gbfs_sol; kwargs...)
+
+Construct a DIMEMiniBatch from a GBFS solution (on-policy trace).
+
+Uses `gbfs_sol.search_order` (the actual GBFS expansion sequence) as the
+context for each open-set query, rather than the optimal plan trajectory.
+This matches the distribution the model faces at inference and eliminates
+the train/test context distribution shift in the offline constructor.
+
+`gbfs_sol` is a `PathSearchSolution` with fields:
+- `.status`       : :success or :max_time / :max_nodes
+- `.trajectory`   : solution path (Vector{GenericState})
+- `.search_tree`  : Dict{UInt64, PathNode} of all generated nodes
+- `.search_order` : Vector{UInt64} of node IDs in GBFS expansion order
+
+Only successful solves are used (returns `nothing` otherwise).
+"""
+function DIMEMiniBatch_onpolicy(pddld, domain::GenericDomain, problem::GenericProblem,
+                                gbfs_sol;
+                                goal_aware = true,
+                                goal_state = NeuroPlanner.goalstate(pddld.domain, problem),
+                                dedup = true,
+                                kwargs...)
+    gbfs_sol.status != :success && return nothing
+
+    search_tree  = gbfs_sol.search_tree   # Dict{UInt64, PathNode}
+    search_order = gbfs_sol.search_order  # Vector{UInt64} — expansion order
+    trajectory   = gbfs_sol.trajectory    # Vector{GenericState} — solution path
+    htrajectory  = Set(hash.(trajectory))
+
+    isempty(search_order) && return nothing
+
+    pddle = goal_aware ? NeuroPlanner.add_goalstate(pddld, problem, goal_state) :
+                         NeuroPlanner.specialize(pddld, problem)
+    spec  = SymbolicPlanners.Specification(problem)
+
+    # ---- collect all states from the search tree ----------------------------
+    # Build a stable index: node_id → integer index into `states`
+    all_ids = collect(keys(search_tree))
+    id_to_idx = Dict{UInt64,Int}(id => i for (i, id) in enumerate(all_ids))
+    states = [search_tree[id] for id in all_ids]   # PathNode array
+
+    path_cost = Float32[Float32(n.path_cost) for n in states]
+
+    # ---- build Mill batch ---------------------------------------------------
+    inner_type = typeof(pddle(first(states).state))
+    x = Mill.batch(inner_type[pddle(n.state) for n in states])
+    x = dedup ? NeuroPlanner.deduplicate(x) : x
+
+    # ---- replay GBFS expansion order to build (query, context) pairs --------
+    # At each expansion step k, the context is search_order[1:k-1].
+    # Queries are the children of the expanded node that are NOT on the
+    # solution trajectory (non-optimal open-set states).
+    # Positive pairs (I₋): the next trajectory node after the expanded node.
+
+    I₊ = Int[]
+    I₋ = Int[]
+    query_ids            = Int[]
+    context_ids_per_query = Vector{Vector{Int}}()
+
+    # Map trajectory states to their indices
+    traj_idx = Dict{UInt64,Int}()
+    for (i, s) in enumerate(trajectory)
+        traj_idx[hash(s)] = id_to_idx[hash(s)]
+    end
+
+    expanded_idx_so_far = Int[]   # indices of nodes expanded so far
+
+    for (step, node_id) in enumerate(search_order)
+        !haskey(search_tree, node_id) && continue
+        node = search_tree[node_id]
+        node_idx = id_to_idx[node_id]
+
+        # Find the next trajectory node after this expanded node (positive pair)
+        h = hash(node.state)
+        h ∉ htrajectory && continue   # only trajectory nodes generate pairs
+
+        traj_pos = findfirst(s -> hash(s) == h, trajectory)
+        traj_pos === nothing && continue
+        traj_pos == length(trajectory) && continue   # goal, no next node
+        next_traj_state = trajectory[traj_pos + 1]
+        next_traj_id    = hash(next_traj_state)
+        !haskey(id_to_idx, next_traj_id) && continue
+        next_traj_idx = id_to_idx[next_traj_id]
+
+        # Children of this node that are NOT on the trajectory = open-set queries
+        # node.child is a LinkedNodeRef linked list (id, action, next)
+        child_ref = node.child
+        while child_ref !== nothing
+            child_id = child_ref.id
+            child_ref = child_ref.next
+            child_id == next_traj_id && continue   # skip the positive pair
+            !haskey(id_to_idx, child_id) && continue
+            child_idx = id_to_idx[child_id]
+            push!(I₊, child_idx)
+            push!(I₋, next_traj_idx)
+            push!(query_ids, child_idx)
+            push!(context_ids_per_query, copy(expanded_idx_so_far))
+        end
+
+        push!(expanded_idx_so_far, node_idx)
+    end
+
+    isempty(I₊) && return nothing
+
+    N = length(states)
+    H₊ = OneHotArrays.onehotbatch(I₊, 1:N)
+    H₋ = OneHotArrays.onehotbatch(I₋, 1:N)
+    context_bags = Mill.ScatteredBags(context_ids_per_query)
+    Δ_targets    = zeros(Float32, length(query_ids))
+
+    DIMEMiniBatch(x, H₊, H₋, path_cost, context_bags, query_ids, Δ_targets)
+end

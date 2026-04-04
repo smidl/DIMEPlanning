@@ -58,27 +58,45 @@ println("\nBuilding lgbfs minibatches …")
 lgbfs_samples = construct_minibatches(pddld, materialize(Loss("lgbfs")), dataset)
 
 # ---- training ---------------------------------------------------------------
-train_conf = SupervisedTraining(; max_epoch=5)
+train_conf = SupervisedTraining(; max_epoch=50)
 
 println("\nTraining lgbfs baseline …")
 opt = NeuroPlannerExperiments.materialize(NeuroPlannerExperiments.OptADAM())
 st_lgbfs = Optimisers.setup(opt, lgbfs_model)
 lgbfs_model, _ = train(lgbfs_model, lgbfs_samples, (opt, st_lgbfs), train_conf)
 
-println("\nTraining DIME model …")
+# Option 1: train DIME with empty context (same signal as lgbfs).
+# This eliminates train/test context distribution shift.
+# At inference the model still receives the growing context — testing whether
+# a context-free predictor can exploit context it was never trained with.
+println("\nTraining DIME model (Option 1: empty context during training) …")
+dime_samples_noctx = strip_context.(dime_samples)
 opt2 = NeuroPlannerExperiments.materialize(NeuroPlannerExperiments.OptADAM())
 st_dime = Optimisers.setup(opt2, dime_model)
-dime_model, _ = train(dime_model, dime_samples, (opt2, st_dime), train_conf)
+dime_model, _ = train(dime_model, dime_samples_noctx, (opt2, st_dime), train_conf)
 
 # ---- evaluation -------------------------------------------------------------
-planner_conf = DIMEPlanner(max_time=30, λ=0.5f0)
-astar_conf   = AStar(max_time=30)
+astar_conf = AStar(max_time=30)
 
 println("\nEvaluating lgbfs baseline on $(length(test_files)) test problems …")
 lgbfs_stats = evaluate_heuristic(pddld, lgbfs_model, astar_conf, test_files)
 
-println("\nEvaluating DIME (λ=$(planner_conf.λ)) on $(length(test_files)) test problems …")
-dime_stats  = evaluate_heuristic(pddld, dime_model,  planner_conf, test_files)
+# Evaluate DIME at three λ values to understand the tradeoff
+dime_results = map([0.0f0, 0.1f0, 0.5f0]) do λ
+    planner_conf = DIMEPlanner(max_time=30, λ=λ)
+    println("\nEvaluating DIME (λ=$λ) on $(length(test_files)) test problems …")
+    stats = evaluate_heuristic(pddld, dime_model, planner_conf, test_files)
+    (λ=λ, freeze=false, stats=stats)
+end
+
+# Diagnostic: freeze_context=true — context-free inference with DIME f-head
+# If this matches lgbfs, the growing context at test time is what hurts performance.
+println("\nEvaluating DIME (λ=0, freeze_context=true) …")
+dime_frozen = let
+    planner_conf = DIMEPlanner(max_time=30, λ=0.0f0, freeze_context=true)
+    stats = evaluate_heuristic(pddld, dime_model, planner_conf, test_files)
+    (λ=0.0f0, freeze=true, stats=stats)
+end
 
 # ---- summary ----------------------------------------------------------------
 function summarise(df, label)
@@ -95,23 +113,32 @@ end
 
 println("\n========== Results ==========")
 summarise(lgbfs_stats, "lgbfs (baseline)")
-summarise(dime_stats,  "DIME  λ=$(planner_conf.λ)")
+for r in dime_results
+    summarise(r.stats, "DIME  λ=$(r.λ)")
+end
+summarise(dime_frozen.stats, "DIME  λ=0 freeze_ctx")
 
-# Per-problem comparison
-if !isempty(lgbfs_stats) && !isempty(dime_stats) &&
-   hasproperty(lgbfs_stats, :problem_file) && hasproperty(dime_stats, :problem_file)
-    println("\nPer-problem (solved / expanded):")
-    println(rpad("problem", 30), rpad("lgbfs", 18), "DIME")
+# Per-problem comparison (lgbfs vs all λ values)
+if !isempty(lgbfs_stats) && hasproperty(lgbfs_stats, :problem_file)
+    println("\nPer-problem expanded nodes (solved? / n_expanded):")
+    all_results = [dime_results; [dime_frozen]]
+    header = rpad("problem", 22) * rpad("lgbfs", 14) *
+             join([rpad(r.freeze ? "DIME freeze" : "DIME λ=$(r.λ)", 14) for r in all_results])
+    println(header)
     for pf in sort(unique(lgbfs_stats.problem_file))
-        rb = only(filter(r -> r.problem_file == pf, eachrow(lgbfs_stats)))
-        rd_rows = filter(r -> r.problem_file == pf, eachrow(dime_stats))
-        if isempty(rd_rows)
-            println(rpad(basename(pf), 30), rpad("$(rb.solved)/$(rb.expanded)", 18), "—")
-        else
-            rd = only(rd_rows)
-            println(rpad(basename(pf), 30),
-                    rpad("$(rb.solved)/$(rb.expanded)", 18),
-                    "$(rd.solved)/$(rd.expanded)")
+        rb = only(filter(row -> row.problem_file == pf, eachrow(lgbfs_stats)))
+        row = rpad(basename(pf), 22) * rpad("$(rb.solved)/$(rb.expanded)", 14)
+        for r in all_results
+            if hasproperty(r.stats, :problem_file)
+                rd_rows = filter(rr -> rr.problem_file == pf, eachrow(r.stats))
+                if isempty(rd_rows)
+                    row *= rpad("—", 14)
+                else
+                    rd = only(rd_rows)
+                    row *= rpad("$(rd.solved)/$(rd.expanded)", 14)
+                end
+            end
         end
+        println(row)
     end
 end

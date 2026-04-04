@@ -20,6 +20,7 @@ using NeuroPlanner.PDDL
 using NeuroPlanner.SymbolicPlanners
 using NeuroPlanner.Mill.Flux
 using Zygote
+using Statistics
 using Test
 
 # ---- paths ------------------------------------------------------------------
@@ -92,6 +93,15 @@ _model   = nothing
         @test isfinite(loss_val)
         @test loss_val >= 0
         println("  L_pred (α=0): $loss_val")
+
+        # Regression: dime_pred_loss must NOT add path cost g.
+        # lgbfsloss ranks by raw f scores; adding g would corrupt gradients.
+        # Verify: dime_pred_loss(f, H₊, H₋) == mean(softplus.(f*H₋ - f*H₊))
+        f_test  = reshape(Float32[1.0, 2.0, 3.0], 1, 3)
+        H₊_test = Float32[1 0; 0 0; 0 1]   # states 1,3 are open
+        H₋_test = Float32[0 0; 1 1; 0 0]   # state 2 is trajectory
+        expected = mean(softplus.(f_test * H₋_test .- f_test * H₊_test))
+        @test dime_pred_loss(f_test, H₊_test, H₋_test) ≈ expected
     end
 
     @testset "dime_loss (α=0.1, full joint loss)" begin
