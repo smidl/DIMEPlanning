@@ -35,8 +35,8 @@ using DIMEPlanning
 using NeuroPlannerExperiments
 using NeuroPlannerExperiments.Optimisers
 using NeuroPlanner
+using NeuroPlanner.PDDL
 using DataFrames
-using PDDL
 using Serialization
 using Random
 using Statistics
