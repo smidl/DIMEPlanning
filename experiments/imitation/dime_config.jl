@@ -7,7 +7,11 @@ using DIMEPlanning
 prepath   = joinpath(ENV["HOME"], "DIMEPlanning", "results")
 confs_dir = joinpath(prepath, "dime_confs")
 
-datasets = [ISPCDataset("ipc23_ferry")]
+datasets = [
+    ISPCDataset("ipc23_ferry"),
+    ISPCDataset("ipc23_blocksworld"),
+    ISPCDataset("ipc23_sokoban"),
+]
 
 archs      = ["atombinaryfe"]
 extractors = [Extractor(; architecture=a, graph_layers=l)
