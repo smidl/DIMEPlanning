@@ -22,6 +22,7 @@ println("Starting submission loop. Ctrl+C to stop.")
 while true
     files = map(readdir(confs_dir; join=true, sort=true)) do path
         c = load_config(path)
+        c = haskey(c, :planner) ? merge(c, (; planner = parse_config(c.planner))) : c
         ofile = result_file(c, prepath)
         (; path, stats=ofile, tmp=ofile*".tmp", model=model_file(c, prepath))
     end
